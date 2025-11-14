@@ -2,6 +2,7 @@ package excel
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -11,11 +12,12 @@ import (
 )
 
 const (
-	START_ROW = 4
-	MAX_ROWS  = 1000
-	FILE_NAME = "Implants.xlsx"
-	DIR_NAME  = "SmileOpsTables"
-	SHEET     = "Sheet1"
+	START_ROW     = 4
+	MAX_ROWS      = 1000
+	FILE_NAME     = "Implants.xlsx"
+	DIR_NAME      = "SmileOpsTables"
+	SHEET         = "Sheet1"
+	TEMPLATE_FILE = "templates/Implants.xlsx"
 )
 
 // ExcelService handles all Excel operations for patient data
@@ -57,54 +59,30 @@ func (s *ExcelService) ensureDirectoryExists() error {
 	return nil
 }
 
-// initializeExcelTemplate creates a new Excel file with headers
-func (s *ExcelService) initializeExcelTemplate(filePath string) error {
-	f := excelize.NewFile()
-	defer f.Close()
+// copyTemplateFile copies the Excel template file to the destination path using streaming
+func (s *ExcelService) copyTemplateFile(templatePath, destPath string) error {
+	// Open source file for reading
+	src, err := os.Open(templatePath)
+	if err != nil {
+		return fmt.Errorf("failed to open template file %s: %w", templatePath, err)
+	}
+	defer src.Close()
 
-	// Set column headers at row 3
-	headers := map[string]string{
-		"A3": "ID",
-		"B3": "Full Name",
-		"C3": "Implant Count",
-		"D3": "Removal Dates",
-		"E3": "Removal Numbers",
-		"F3": "Removal Comment",
-		"G3": "Sinus Lift Dates",
-		"H3": "Sinus Lift Numbers",
-		"I3": "Sinus Lift Comment",
-		"J3": "Bone Grafting Dates",
-		"K3": "Bone Grafting Numbers",
-		"L3": "Bone Grafting Comment",
-		"M3": "Formation Dates",
-		"N3": "Formation Numbers",
-		"O3": "Formation Comment",
-		"P3": "Reinstall Dates",
-		"Q3": "Reinstall Numbers",
-		"R3": "Reinstall Comment",
-		"S3": "Permanent Pros. Dates",
-		"T3": "Permanent Pros. Numbers",
-		"U3": "Permanent Pros. Comment",
-		"V3": "Temporary Pros. Dates",
-		"W3": "Temporary Pros. Numbers",
-		"X3": "Temporary Pros. Comment",
-		"Y3": "Control 6 Months",
-		"Z3": "Control 1 Year",
-		"AA3": "Occupational Hygiene",
+	// Create destination file
+	dst, err := os.Create(destPath)
+	if err != nil {
+		return fmt.Errorf("failed to create destination file %s: %w", destPath, err)
+	}
+	defer dst.Close()
+
+	// Copy contents using streaming (memory efficient)
+	if _, err := io.Copy(dst, src); err != nil {
+		return fmt.Errorf("failed to copy template from %s to %s: %w", templatePath, destPath, err)
 	}
 
-	for cell, value := range headers {
-		if err := f.SetCellValue(SHEET, cell, value); err != nil {
-			return fmt.Errorf("failed to set header: %w", err)
-		}
-	}
-
-	// Add title at row 1
-	f.SetCellValue(SHEET, "A1", "SmileOps - Implants Database")
-
-	// Save the file
-	if err := f.SaveAs(filePath); err != nil {
-		return fmt.Errorf("failed to save Excel file: %w", err)
+	// Ensure data is written to disk
+	if err := dst.Sync(); err != nil {
+		return fmt.Errorf("failed to sync destination file: %w", err)
 	}
 
 	return nil
@@ -124,9 +102,24 @@ func (s *ExcelService) ensureFileExists() error {
 
 	// Check if file exists
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		// File doesn't exist, create it
-		if err := s.initializeExcelTemplate(filePath); err != nil {
-			return fmt.Errorf("failed to initialize Excel template: %w", err)
+		// File doesn't exist, copy from template
+		// Get executable path to locate bundled template
+		exe, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("failed to get executable path: %w", err)
+		}
+		exeDir := filepath.Dir(exe)
+
+		templatePath := filepath.Join(exeDir, TEMPLATE_FILE)
+
+		// Verify template exists
+		if _, err := os.Stat(templatePath); os.IsNotExist(err) {
+			return fmt.Errorf("template file not found at %s", templatePath)
+		}
+
+		// Copy template to destination
+		if err := s.copyTemplateFile(templatePath, filePath); err != nil {
+			return fmt.Errorf("failed to copy Excel template: %w", err)
 		}
 	}
 
